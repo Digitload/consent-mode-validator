@@ -37,6 +37,8 @@ npx @fitconsent/consent-mode-validator https://mystore.com
 
 ## Usage
 
+### Option 1 — Run with npx (no install)
+
 ```bash
 # Auto-detect platform
 npx @fitconsent/consent-mode-validator https://mystore.com
@@ -57,6 +59,30 @@ npx @fitconsent/consent-mode-validator https://mystore.com --timeout 15000
 
 # Short alias
 npx cmv https://mystore.com
+```
+
+### Option 2 — Global install (recommended if npx fails)
+
+If `npx` throws a Playwright browser error, install the tool globally once and run it directly:
+
+```bash
+npm install -g @fitconsent/consent-mode-validator
+```
+
+Then use either command from anywhere:
+
+```bash
+consent-mode-validator https://mystore.com
+# or the short alias:
+cmv https://mystore.com
+```
+
+All flags work the same way:
+
+```bash
+cmv https://mystore.com --platform shopify
+cmv https://mystore.com --verbose
+cmv https://mystore.com --json
 ```
 
 ---
@@ -136,6 +162,31 @@ for (const check of report.checks) {
 ---
 
 ## Common errors and fixes
+
+### `Error: Executable doesn't exist` / Playwright browser not found
+
+**Root cause:** Playwright cannot download its bundled Chromium on your OS (e.g. Ubuntu 26.04 or other unsupported platforms), and no system Chrome was detected.
+
+**Fix 1 — Use the global install instead of npx (simplest):**
+
+```bash
+npm install -g @fitconsent/consent-mode-validator
+cmv https://mysite.com
+```
+
+**Fix 2 — Point to your existing system Chrome:**
+
+```bash
+CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome npx @fitconsent/consent-mode-validator https://mysite.com
+```
+
+**Fix 3 — Download Playwright's bundled browser manually:**
+
+```bash
+npx playwright install chromium
+```
+
+---
 
 ### `Error: The page returned an "Access Denied" response`
 
