@@ -52,6 +52,9 @@ npx @fitconsent/consent-mode-validator https://mystore.com --verbose
 # JSON output (useful for CI integration)
 npx @fitconsent/consent-mode-validator https://mystore.com --json
 
+# Custom timeout (ms) — useful for slow or live-content sites
+npx @fitconsent/consent-mode-validator https://mystore.com --timeout 15000
+
 # Short alias
 npx cmv https://mystore.com
 ```
@@ -134,6 +137,26 @@ for (const check of report.checks) {
 
 ## Common errors and fixes
 
+### `Error: The page returned an "Access Denied" response`
+
+**Root cause:** The site uses enterprise bot protection (Akamai, Cloudflare Bot Management, etc.) that blocks headless browsers. Results on a blocked page would be meaningless, so validation is aborted.
+
+**What to do:** These sites cannot be validated remotely with a headless browser. Validate the consent implementation directly in a real browser using the browser's DevTools console — check `window.dataLayer` and `window.google_tag_data?.ics` after the page loads.
+
+---
+
+### `Error: Timeout exceeded` / validation takes 30+ seconds on live-content sites
+
+**Root cause:** The validator waits for the network to go idle before running checks. Sites with live scores, WebSocket connections, or continuous ad pings never reach idle. The validator automatically retries with a lighter `load` strategy, which adds ~32 seconds to the total run time.
+
+**Fix:** Pass a shorter `--timeout` to reduce the wait before the fallback kicks in:
+
+```bash
+npx @fitconsent/consent-mode-validator https://mysite.com --timeout 10000
+```
+
+---
+
 ### `gtag('consent','default')` not found
 
 **Root cause:** Your GTM snippet loads before any consent defaults are set.
@@ -185,7 +208,7 @@ acceptButton.addEventListener('click', () => {
 
 - Node.js ≥ 18
 
-After installing, run this once to download the headless browser (~150 MB):
+The validator uses your system Chrome if one is found (`google-chrome`, `google-chrome-stable`, or `chromium`). If no system Chrome is available, run this once to download the bundled headless browser (~150 MB):
 
 ```bash
 npx playwright install chromium

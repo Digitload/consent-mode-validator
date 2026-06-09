@@ -22,7 +22,7 @@ export async function runUniversalChecks(page: Page, verbose: boolean): Promise<
       const entry = dl[i] as Record<string, unknown>;
       if (!entry || typeof entry !== 'object') continue;
 
-      // Consent default command
+      // Consent default command (traditional gtag/direct dataLayer pattern)
       if (
         entry[0] === 'consent' && entry[1] === 'default' &&
         typeof entry[2] === 'object' && entry[2] !== null
@@ -34,21 +34,35 @@ export async function runUniversalChecks(page: Page, verbose: boolean): Promise<
 
       // GA4 hit: event or config push with measurement_id
       const hasMeasurementId = typeof entry['measurement_id'] === 'string' ||
-        (Array.isArray(entry) && typeof (entry as string[])[0] === 'string' &&
-          ((entry as string[])[0] === 'config' || (entry as string[])[0] === 'event'));
+        (typeof entry[0] === 'string' &&
+          ((entry[0] === 'config' || entry[0] === 'event')));
 
       if (!defaultSet && hasMeasurementId) {
         ga4HitBeforeDefault = true;
       }
     }
 
-    if (!defaultSet) {
-      return { ok: false, detail: `No gtag('consent','default',...) found in dataLayer (${dl.length} entries)` };
+    if (defaultSet) {
+      if (ga4HitBeforeDefault) {
+        return { ok: false, detail: `GA4 hit detected before consent default at index ${defaultIndex}` };
+      }
+      return { ok: true, detail: `Consent defaults found at dataLayer[${defaultIndex}] before any GA4 hit` };
     }
-    if (ga4HitBeforeDefault) {
-      return { ok: false, detail: `GA4 hit detected before consent default at index ${defaultIndex}` };
+
+    // GTM Custom Template pattern: setDefaultConsentState() does not push to window.dataLayer.
+    // Detect via google_tag_data.ics which Google Tag updates when consent is initialized.
+    // ics.usedDefault = true  → defaults were set (directly or via GTM template)
+    // ics.wasSetLate  = false → defaults were set before any tag fired
+    type Ics = { usedDefault?: boolean; wasSetLate?: boolean };
+    const ics = (window as unknown as { google_tag_data?: { ics?: Ics } }).google_tag_data?.ics;
+    if (ics?.usedDefault && !ics?.wasSetLate) {
+      return {
+        ok: true,
+        detail: 'Consent defaults initialized via GTM Consent Initialization trigger (Custom Template — setDefaultConsentState)',
+      };
     }
-    return { ok: true, detail: `Consent defaults found at dataLayer[${defaultIndex}] before any GA4 hit` };
+
+    return { ok: false, detail: `No gtag('consent','default',...) found in dataLayer (${dl.length} entries)` };
   });
 
   results.push({
@@ -61,11 +75,65 @@ export async function runUniversalChecks(page: Page, verbose: boolean): Promise<
       : "Call gtag('consent','default',{ad_storage:'denied',analytics_storage:'denied',...}) before loading GTM or GA4. See: https://fitconsent.com/en/documentation/gtm-setup",
   });
 
+  // ── Check 4: fitconsent_given cookie structure (captured BEFORE simulated interaction) ──
+  // Must run before U2 because the accept-button simulation may trigger cookie creation.
+  const cookieResult = await page.evaluate((): { ok: boolean; detail: string; found: boolean } => {
+    const raw = document.cookie
+      .split(';')
+      .map((c: string) => c.trim())
+      .find((c: string) => c.startsWith('fitconsent_given='));
+
+    if (!raw) {
+      return { ok: true, detail: 'FitConsent not installed — check skipped', found: false };
+    }
+
+    try {
+      const value = decodeURIComponent(raw.split('=').slice(1).join('='));
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+
+      if (typeof parsed.choices !== 'object') {
+        return { ok: false, detail: 'fitconsent_given cookie found but missing "choices" key', found: true };
+      }
+      if (typeof parsed.geo !== 'string') {
+        return { ok: false, detail: 'fitconsent_given cookie found but missing "geo" key', found: true };
+      }
+
+      const choiceCount = Object.keys(parsed.choices as object).length;
+      return { ok: true, detail: `fitconsent_given cookie valid — ${choiceCount} consent choices, geo="${parsed.geo}"`, found: true };
+    } catch {
+      return { ok: false, detail: 'fitconsent_given cookie found but is not valid JSON', found: true };
+    }
+  });
+
   // ── Check 2: gtag consent update fires after simulated acceptance ─────────
-  // Inject a lightweight consent-update spy, then simulate a click on common
-  // accept button selectors and verify an update command reaches dataLayer.
+  // Handles two scenarios:
+  //   a) Returning visitor: consent update already in dataLayer (fired from stored cookie)
+  //   b) New visitor: simulate a click on a common accept button and wait for the update
   const consentUpdateResult = await page.evaluate(async (): Promise<{ ok: boolean; detail: string }> => {
     const dl: unknown[] = (window as unknown as { dataLayer?: unknown[] }).dataLayer ?? [];
+
+    // Helper: check any entry (array or Arguments object) for consent command
+    const isConsentEntry = (e: unknown, subcommand: string): boolean => {
+      if (!e || typeof e !== 'object') return false;
+      const entry = e as Record<string | number, unknown>;
+      return entry[0] === 'consent' && entry[1] === subcommand;
+    };
+
+    // Returning visitor: update was already pushed from stored consent cookie
+    const existingUpdate = dl.find(e => isConsentEntry(e, 'update'));
+    if (existingUpdate) {
+      const params = (existingUpdate as Record<string | number, unknown>)[2] as Record<string, string> | undefined;
+      const granted = params ? Object.values(params).filter(v => v === 'granted').length : 0;
+      return { ok: true, detail: `Consent update found in dataLayer (${granted} granted signals — triggered from stored consent cookie)` };
+    }
+
+    // Also check via google_tag_data.ics.usedUpdate for GTM Custom Template pattern
+    type Ics = { usedUpdate?: boolean };
+    const ics = (window as unknown as { google_tag_data?: { ics?: Ics } }).google_tag_data?.ics;
+    if (ics?.usedUpdate) {
+      return { ok: true, detail: 'Consent update applied via GTM Custom Template (usedUpdate confirmed in google_tag_data)' };
+    }
+
     const beforeCount = dl.length;
 
     const ACCEPT_SELECTORS = [
@@ -94,18 +162,15 @@ export async function runUniversalChecks(page: Page, verbose: boolean): Promise<
     await new Promise(r => setTimeout(r, 1000));
 
     const newEntries = dl.slice(beforeCount);
-    const hasUpdate = newEntries.some(e => {
-      if (!Array.isArray(e)) return false;
-      return e[0] === 'consent' && e[1] === 'update';
-    });
+    const updateEntry = newEntries.find(e => isConsentEntry(e, 'update'));
 
-    if (!hasUpdate) {
+    if (!updateEntry) {
       return { ok: false, detail: `Accept button clicked but no gtag('consent','update',...) pushed to dataLayer` };
     }
 
-    const updateEntry = newEntries.find(e => Array.isArray(e) && e[0] === 'consent' && e[1] === 'update') as unknown[];
-    const granted = Object.values(updateEntry[2] as Record<string, string>).filter(v => v === 'granted');
-    return { ok: true, detail: `consent update fired with ${granted.length} granted signals after user accept` };
+    const params = (updateEntry as Record<string | number, unknown>)[2] as Record<string, string> | undefined;
+    const granted = params ? Object.values(params).filter(v => v === 'granted').length : 0;
+    return { ok: true, detail: `consent update fired with ${granted} granted signals after user accept` };
   });
 
   results.push({
@@ -133,12 +198,20 @@ export async function runUniversalChecks(page: Page, verbose: boolean): Promise<
     const dl: unknown[] = (window as unknown as { dataLayer?: unknown[] }).dataLayer ?? [];
     let consentDefaultSeen = false;
 
-    // Check if consent default was declared before GTM loaded
     for (const entry of dl) {
-      const e = entry as Record<string, unknown>;
+      const e = entry as Record<string | number, unknown>;
       if (e && e[0] === 'consent' && e[1] === 'default') {
         consentDefaultSeen = true;
         break;
+      }
+    }
+
+    // GTM Custom Template pattern: setDefaultConsentState() — check google_tag_data.ics
+    if (!consentDefaultSeen) {
+      type Ics = { usedDefault?: boolean; wasSetLate?: boolean };
+      const ics = (window as unknown as { google_tag_data?: { ics?: Ics } }).google_tag_data?.ics;
+      if (ics?.usedDefault && !ics?.wasSetLate) {
+        consentDefaultSeen = true;
       }
     }
 
@@ -164,35 +237,6 @@ export async function runUniversalChecks(page: Page, verbose: boolean): Promise<
     fix: prematureScripts.ok
       ? undefined
       : 'Set consent defaults BEFORE loading GTM. Move your gtag consent default snippet above the GTM script tag.',
-  });
-
-  // ── Check 4: fitconsent_given cookie structure ────────────────────────────
-  const cookieResult = await page.evaluate((): { ok: boolean; detail: string; found: boolean } => {
-    const raw = document.cookie
-      .split(';')
-      .map((c: string) => c.trim())
-      .find((c: string) => c.startsWith('fitconsent_given='));
-
-    if (!raw) {
-      return { ok: true, detail: 'FitConsent not installed — check skipped', found: false };
-    }
-
-    try {
-      const value = decodeURIComponent(raw.split('=').slice(1).join('='));
-      const parsed = JSON.parse(value) as Record<string, unknown>;
-
-      if (typeof parsed.choices !== 'object') {
-        return { ok: false, detail: 'fitconsent_given cookie found but missing "choices" key', found: true };
-      }
-      if (typeof parsed.geo !== 'string') {
-        return { ok: false, detail: 'fitconsent_given cookie found but missing "geo" key', found: true };
-      }
-
-      const choiceCount = Object.keys(parsed.choices as object).length;
-      return { ok: true, detail: `fitconsent_given cookie valid — ${choiceCount} consent choices, geo="${parsed.geo}"`, found: true };
-    } catch {
-      return { ok: false, detail: 'fitconsent_given cookie found but is not valid JSON', found: true };
-    }
   });
 
   results.push({

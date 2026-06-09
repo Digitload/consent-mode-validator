@@ -33,6 +33,13 @@ export async function runGtmChecks(page, verbose) {
             return { ok: false, detail: 'GTM script tag present but gtm.js event not found in dataLayer — GTM may have failed to load' };
         }
         if (consentDefaultIndex === -1) {
+            const ics = window.google_tag_data?.ics;
+            if (ics?.usedDefault && !ics?.wasSetLate) {
+                return {
+                    ok: true,
+                    detail: 'GTM using Consent Initialization trigger (Custom Template — setDefaultConsentState, consent initialized before tags fired)',
+                };
+            }
             return {
                 ok: false,
                 detail: `GTM loaded (dataLayer[${gtmLoadIndex}]) but no consent default found — GTM fired without consent initialization`,

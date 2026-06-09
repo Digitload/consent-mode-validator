@@ -41,6 +41,18 @@ export async function runGtmChecks(page: Page, verbose: boolean): Promise<CheckR
     }
 
     if (consentDefaultIndex === -1) {
+      // GTM Custom Template pattern: setDefaultConsentState() does not push to window.dataLayer.
+      // Verify via google_tag_data.ics: usedDefault=true means defaults were set,
+      // wasSetLate=false means they were set before any tag fired.
+      type Ics = { usedDefault?: boolean; wasSetLate?: boolean };
+      const ics = (window as unknown as { google_tag_data?: { ics?: Ics } }).google_tag_data?.ics;
+      if (ics?.usedDefault && !ics?.wasSetLate) {
+        return {
+          ok: true,
+          detail: 'GTM using Consent Initialization trigger (Custom Template — setDefaultConsentState, consent initialized before tags fired)',
+        };
+      }
+
       return {
         ok: false,
         detail: `GTM loaded (dataLayer[${gtmLoadIndex}]) but no consent default found — GTM fired without consent initialization`,
