@@ -1,0 +1,51 @@
+{
+  "name": "@fitconsent/consent-mode-validator",
+  "version": "1.0.0",
+  "description": "CLI tool to validate Google Consent Mode V2, Shopify Customer Privacy API, and GTM consent setup on any website",
+  "keywords": [
+    "google-consent-mode",
+    "consent-mode-v2",
+    "shopify-customer-privacy",
+    "gdpr",
+    "cookie-consent",
+    "gtm",
+    "google-tag-manager",
+    "fitconsent"
+  ],
+  "homepage": "https://fitconsent.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Digitload/consent-mode-validator"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "consent-mode-validator": "./bin/validate.js",
+    "cmv": "./bin/validate.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "validate": "node bin/validate.js"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "playwright": "^1.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
