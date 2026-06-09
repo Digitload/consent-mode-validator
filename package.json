@@ -1,6 +1,6 @@
 {
   "name": "@fitconsent/consent-mode-validator",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "CLI tool to validate Google Consent Mode V2, Shopify Customer Privacy API, and GTM consent setup on any website",
   "keywords": [
     "google-consent-mode",
