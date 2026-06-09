@@ -184,9 +184,12 @@ acceptButton.addEventListener('click', () => {
 ## Requirements
 
 - Node.js ≥ 18
-- Playwright (installed automatically as a dependency)
 
-First run will download a Chromium browser (~150 MB) via `playwright install chromium`.
+After installing, run this once to download the headless browser (~150 MB):
+
+```bash
+npx playwright install chromium
+```
 
 ---
 
